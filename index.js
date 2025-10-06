@@ -1,9 +1,18 @@
 import express from "express";
 import dotenv from "dotenv";
 import { sendWhatsAppMessage } from "./controllers/whatsappController.js";
+import cors from "cors";
 
 dotenv.config();
 const app = express();
+
+// ✅ Allow your production domain + localhost for dev
+app.use(cors({
+  origin: "https://colabesports.in",
+  methods: ["GET", "POST", "OPTIONS"], // include OPTIONS for preflight
+  allowedHeaders: ["Content-Type","Authorization"]
+}));
+
 app.use(express.json());
 
 // In-memory store for received messages

@@ -109,6 +109,13 @@ app.post("/webhook", async (req, res) => {
               responseType: "arraybuffer",
             });
 
+
+            // 🧠 Make sure the folder exists
+            const uploadDir = path.join(process.cwd(), "uploads");
+            if (!fs.existsSync(uploadDir)) {
+              fs.mkdirSync(uploadDir);
+            }
+
             // Save image locally
             const imageName = `${Date.now()}.jpg`;
             const imagePath = path.join(uploadDir, imageName);

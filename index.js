@@ -5,6 +5,7 @@ import cors from "cors";
 import axios from "axios";
 import fs from "fs";
 import path from "path";
+import multer from "multer";
 import { fileURLToPath } from "url";
 
 dotenv.config();
@@ -19,15 +20,21 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir);
 }
 
-// ✅ Allow your production domain + localhost for dev
+// ✅ Multer storage config
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
+});
+const upload = multer({ storage });
+
 app.use(cors({
   origin: [
-      "http://127.0.0.1:5501",
-      "http://localhost:5501",
-      "https://colabesports.in",
-    ],
-  methods: ["GET", "POST", "OPTIONS"], // include OPTIONS for preflight
-  allowedHeaders: ["Content-Type","Authorization"]
+    "http://127.0.0.1:5501",
+    "http://localhost:5501",
+    "https://colabesports.in",
+  ],
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
 app.use(express.json());
@@ -35,7 +42,7 @@ app.use(express.json());
 // In-memory store for received messages
 let receivedMessagesStore = [];
 
-// Route to send WhatsApp message after registration
+// Route to send WhatsApp message
 app.post("/api/send-whatsapp", sendWhatsAppMessage);
 
 app.get("/", (req, res) => {
@@ -46,7 +53,7 @@ app.get("/", (req, res) => {
  * ✅ STEP 1: VERIFY WEBHOOK (Meta setup)
  */
 app.get("/webhook", (req, res) => {
-  const VERIFY_TOKEN = "my_verify_token"; // must match Meta setup
+  const VERIFY_TOKEN = "my_verify_token";
 
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -89,9 +96,9 @@ app.post("/webhook", async (req, res) => {
           console.log(`🖼 Received image with Media ID: ${mediaId}`);
 
           try {
-            // Get media URL from WhatsApp API
+            // 1️⃣ Get media URL from WhatsApp Graph API
             const mediaRes = await axios.get(
-              `https://graph.facebook.com/v18.0/${mediaId}`,
+              `https://graph.facebook.com/v19.0/${mediaId}`,
               {
                 headers: {
                   Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
@@ -101,7 +108,7 @@ app.post("/webhook", async (req, res) => {
 
             const mediaUrl = mediaRes.data.url;
 
-            // Download the image
+            // 2️⃣ Download image data
             const imageResponse = await axios.get(mediaUrl, {
               headers: {
                 Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
@@ -109,21 +116,14 @@ app.post("/webhook", async (req, res) => {
               responseType: "arraybuffer",
             });
 
-
-            // 🧠 Make sure the folder exists
-            const uploadDir = path.join(process.cwd(), "uploads");
-            if (!fs.existsSync(uploadDir)) {
-              fs.mkdirSync(uploadDir);
-            }
-
-            // Save image locally
+            // 3️⃣ Save image using multer’s folder path
             const imageName = `${Date.now()}.jpg`;
-            const imagePath = path.join(uploadDir, imageName);
-            fs.writeFileSync(imagePath, imageResponse.data);
+            const filePath = path.join(uploadDir, imageName);
+            fs.writeFileSync(filePath, imageResponse.data);
 
-            console.log(`✅ Image saved locally: ${imagePath}`);
+            console.log(`✅ Image saved in uploads/: ${filePath}`);
 
-            // Store in message array
+            // 4️⃣ Store message info
             receivedMessagesStore.push({
               from,
               text: `[Image] ${imageName}`,
@@ -149,7 +149,18 @@ app.get("/api/messages", (req, res) => {
   res.status(200).json({ messages: receivedMessagesStore });
 });
 
+/**
+ * ✅ STEP 4: (Optional) Manual upload route to test multer
+ */
+app.post("/upload", upload.single("file"), (req, res) => {
+  res.json({
+    success: true,
+    filename: req.file.filename,
+    path: `/uploads/${req.file.filename}`,
+  });
+});
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, "0.0.0.0", () =>
-  console.log(`🚀 Server running on port http://localhost:${PORT}`)
+  console.log(`🚀 Server running on http://localhost:${PORT}`)
 );

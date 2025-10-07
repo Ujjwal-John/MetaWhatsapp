@@ -94,7 +94,7 @@ app.post("/webhook", async (req, res) => {
               `https://graph.facebook.com/v18.0/${mediaId}`,
               {
                 headers: {
-                  Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+                  Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
                 },
               }
             );
@@ -104,7 +104,7 @@ app.post("/webhook", async (req, res) => {
             // Download the image
             const imageResponse = await axios.get(mediaUrl, {
               headers: {
-                Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+                Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
               },
               responseType: "arraybuffer",
             });

@@ -101,6 +101,8 @@ app.post("/webhook", async (req, res) => {
 
             const mediaUrl = mediaRes.data.url;
 
+            console.log(`🔗 Media URL: ${mediaUrl}`);
+
             // Download the image
             const imageResponse = await axios.get(mediaUrl, {
               headers: {

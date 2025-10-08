@@ -6,47 +6,52 @@ import axios from "axios";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { v2 as cloudinary } from "cloudinary";
 
 dotenv.config();
 const app = express();
 
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Ensure uploads folder exists
+// Ensure uploads folder exists (optional)
 const uploadDir = path.join(__dirname, "uploads");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir);
-}
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
 
-// ✅ Allow your production domain + localhost for dev
+// CORS setup
 app.use(cors({
   origin: [
-      "http://127.0.0.1:5501",
-      "http://localhost:5501",
-      "https://colabesports.in",
-    ],
-  methods: ["GET", "POST", "OPTIONS"], // include OPTIONS for preflight
+    "http://127.0.0.1:5501",
+    "http://localhost:5501",
+    "https://colabesports.in",
+  ],
+  methods: ["GET", "POST", "OPTIONS"],
   allowedHeaders: ["Content-Type","Authorization"]
 }));
 
 app.use(express.json());
 
-// In-memory store for received messages
+// In-memory store
 let receivedMessagesStore = [];
 
-// Route to send WhatsApp message after registration
+// Send WhatsApp message route
 app.post("/api/send-whatsapp", sendWhatsAppMessage);
 
-app.get("/", (req, res) => {
-  res.send("✅ WhatsApp API is running...");
-});
+// Root route
+app.get("/", (req, res) => res.send("✅ WhatsApp API is running..."));
 
 /**
- * ✅ STEP 1: VERIFY WEBHOOK (Meta setup)
+ * STEP 1: VERIFY WEBHOOK
  */
 app.get("/webhook", (req, res) => {
-  const VERIFY_TOKEN = "my_verify_token"; // must match Meta setup
+  const VERIFY_TOKEN = "my_verify_token";
 
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -55,98 +60,103 @@ app.get("/webhook", (req, res) => {
   if (mode && token) {
     if (mode === "subscribe" && token === VERIFY_TOKEN) {
       console.log("✅ WEBHOOK_VERIFIED");
-      res.status(200).send(challenge);
+      return res.status(200).send(challenge);
     } else {
-      res.sendStatus(403);
+      return res.sendStatus(403);
     }
   }
 });
 
 /**
- * ✅ STEP 2: RECEIVE MESSAGES (TEXT & IMAGE)
+ * STEP 2: RECEIVE MESSAGES
  */
 app.post("/webhook", async (req, res) => {
-  const body = req.body;
+  try {
+    const body = req.body;
 
-  if (body.object && body.entry) {
+    if (!(body.object && body.entry)) {
+      return res.status(404).json({ error: "Invalid payload" });
+    }
+
     const messages = body.entry[0].changes[0]?.value.messages;
+    if (!messages) return res.status(200).json({ status: "no messages" });
 
-    if (messages) {
-      for (const msg of messages) {
-        const from = msg.from;
-        const timestamp = new Date().toISOString();
+    for (const msg of messages) {
+      const from = msg.from;
+      const timestamp = new Date().toISOString();
 
-        // CASE 1: Text message
-        if (msg.text) {
-          const text = msg.text.body;
-          console.log(`📩 Text from ${from}: ${text}`);
-          receivedMessagesStore.push({ from, text, timestamp });
-        }
+      // TEXT MESSAGE
+      if (msg.text?.body) {
+        const text = msg.text.body;
+        console.log(`📩 Text from ${from}: ${text}`);
+        receivedMessagesStore.push({ from, text, timestamp });
+      }
 
-        // CASE 2: Image message
-        if (msg.type === "image") {
-          const mediaId = msg.image.id;
-          console.log(`🖼 Received image with Media ID: ${mediaId}`);
+      // IMAGE MESSAGE
+      if (msg.image?.id) {
+        const mediaId = msg.image.id;
+        console.log(`🖼 Received image with Media ID: ${mediaId}`);
 
-          try {
-            // Get media URL from WhatsApp API
-            const mediaRes = await axios.get(
-              `https://graph.facebook.com/v23.0/${mediaId}`,
-              {
-                headers: {
-                  Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-                },
+        try {
+          // Step 1: Get media metadata (URL)
+          const mediaRes = await axios.get(
+            `https://graph.facebook.com/v20.0/${mediaId}`,
+            {
+              headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
+            }
+          );
+          const mediaUrl = mediaRes.data.url;
+
+          // Step 2: Download image as buffer
+          const imageResponse = await axios.get(mediaUrl, {
+            responseType: "arraybuffer",
+            headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
+          });
+
+          // Step 3: Upload to Cloudinary
+          const uploadedImage = await new Promise((resolve, reject) => {
+            const uploadStream = cloudinary.uploader.upload_stream(
+              { folder: "whatsapp_media" },
+              (error, result) => {
+                if (error) reject(error);
+                else resolve(result);
               }
             );
+            uploadStream.end(imageResponse.data);
+          });
 
-            const mediaUrl = mediaRes.data.url;
+          console.log(`✅ Image uploaded to Cloudinary: ${uploadedImage.secure_url}`);
 
-            console.log(`🔗 Media URL: ${mediaUrl}`);
+          receivedMessagesStore.push({
+            from,
+            text: `[Image] ${uploadedImage.secure_url}`,
+            timestamp,
+            mediaId,
+            cloudinary_id: uploadedImage.public_id,
+          });
 
-            // Download the image
-            const imageResponse = await axios.get(mediaUrl, {
-              headers: {
-                Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-              },
-              responseType: "arraybuffer",
-            });
-
-
-            
-
-            // Save image locally
-            const imageName = `${Date.now()}.jpg`;
-            const imagePath = path.join(uploadDir, imageName);
-            fs.writeFileSync(imagePath, imageResponse.data);
-
-            console.log(`✅ Image saved locally: ${imagePath}`);
-
-            // Store in message array
-            receivedMessagesStore.push({
-              from,
-              text: `[Image] ${imageName}`,
-              timestamp,
-            });
-          } catch (err) {
-            console.error("❌ Error fetching image:", err.message);
-          }
+        } catch (err) {
+          console.error("❌ Error uploading image:", err.message);
         }
       }
     }
 
-    return res.status(200).json({ status: "received" });
-  }
+    res.status(200).json({ status: "received" });
 
-  res.status(404).json({ error: "Invalid payload" });
+  } catch (err) {
+    console.error("❌ Webhook error:", err.message);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
 });
 
 /**
- * ✅ STEP 3: GET ALL RECEIVED MESSAGES
+ * STEP 3: GET ALL RECEIVED MESSAGES
  */
 app.get("/api/messages", (req, res) => {
   res.status(200).json({ messages: receivedMessagesStore });
 });
 
+// Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, "0.0.0.0", () =>
   console.log(`🚀 Server running on port http://localhost:${PORT}`)

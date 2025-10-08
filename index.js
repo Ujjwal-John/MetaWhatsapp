@@ -91,7 +91,7 @@ app.post("/webhook", async (req, res) => {
           try {
             // Get media URL from WhatsApp API
             const mediaRes = await axios.get(
-              `https://graph.facebook.com/v18.0/${mediaId}`,
+              `https://graph.facebook.com/v23.0/${mediaId}`,
               {
                 headers: {
                   Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
@@ -105,9 +105,9 @@ app.post("/webhook", async (req, res) => {
 
             // Download the image
             const imageResponse = await axios.get(mediaUrl, {
-              headers: {
-                Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-              },
+              // headers: {
+              //   Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+              // },
               responseType: "arraybuffer",
             });
 
